@@ -65,7 +65,9 @@ impl Sampler {
         match self.loop_mode {
             LoopMode::LoopSustain if !self.released => {
                 self.released = true;
-                // Stop looping, continue playing from current position to sample_end
+                // Record position for release-tail playback from loop_end onward.
+                // This matches xsynth's SampleReaderLoopSustain::signal_release.
+                self.position_at_release = self.position;
             }
             LoopMode::LoopContinuous => {
                 // Keep looping but envelope fade will handle it
@@ -79,8 +81,16 @@ impl Sampler {
 
     /// Read the next sample and advance position.
     pub fn process(&mut self) -> f32 {
-        let pos = self.position;
-        let sample = self.read_sample(pos);
+        // LoopSustain release: after note-off, playback continues from loop_end
+        // (the natural release tail) rather than from wherever the loop position
+        // happened to be.  This mirrors xsynth's SampleReaderLoopSustain behaviour
+        // and prevents playing non-loop data that may contain attack transients.
+        let read_pos = if self.released && self.loop_mode == LoopMode::LoopSustain {
+            self.loop_end as f64 + (self.position - self.position_at_release)
+        } else {
+            self.position
+        };
+        let sample = self.read_sample(read_pos);
 
         self.position += self.speed;
 
@@ -108,20 +118,25 @@ impl Sampler {
         let frac = (pos - idx as f64) as f32;
 
         let a = self.get(idx);
-        let b = self.get(idx + 1);
+        // At the sample_end boundary, use a for b as well to avoid a
+        // discontinuity between interpolated and held-last-sample values.
+        let b = if idx + 1 >= self.sample_end as usize {
+            a
+        } else {
+            self.get(idx + 1)
+        };
 
         a + (b - a) * frac
     }
 
     /// Get sample at index, returning last valid value for out-of-bounds.
-    /// For NoLoop/OneShot, returns the last sample instead of 0.0 so the
-    /// envelope can continue fading naturally after the sample ends.
     #[inline]
     fn get(&self, idx: usize) -> f32 {
-        if (!matches!(self.loop_mode, LoopMode::LoopContinuous) || self.released)
-            && idx >= self.sample_end as usize {
-                return self.data.get(self.sample_end as usize - 1)
-                    .copied().unwrap_or(0.0);
+        // LoopContinuous never leaves the loop region, so it never hits sample_end.
+        // All other modes can advance past sample_end, where we hold the last sample.
+        if self.loop_mode != LoopMode::LoopContinuous && idx >= self.sample_end as usize {
+            return self.data.get(self.sample_end as usize - 1)
+                .copied().unwrap_or(0.0);
         }
         self.data.get(idx).copied().unwrap_or(0.0)
     }

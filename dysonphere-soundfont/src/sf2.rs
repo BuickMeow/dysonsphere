@@ -562,8 +562,11 @@ struct Sf2RawEnvelope {
 
 /// Merge absolute preset value with absolute-or-relative instrument value.
 /// SF2 spec: instrument value is absolute; preset value is additive offset.
+/// All SF2 volume envelope generators default to -12000 timecents (≈0.001s)
+/// per the SF2 specification §8.1.2.
 fn timecents_merge(_default: i16, preset: Option<i16>, instrument: Option<i16>) -> i32 {
-    i32::from(instrument.unwrap_or(-12000)) + i32::from(preset.unwrap_or(0))
+    let default: i16 = -12000;
+    i32::from(instrument.unwrap_or(default)) + i32::from(preset.unwrap_or(0))
 }
 
 fn sustain_merge(_default: i16, preset: Option<i16>, instrument: Option<i16>) -> i32 {
