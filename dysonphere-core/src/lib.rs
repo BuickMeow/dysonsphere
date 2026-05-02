@@ -7,6 +7,8 @@ pub mod envelope_debug_analysis;
 pub mod envelope_fix_proposal;
 #[cfg(test)]
 pub mod envelope_fix_verification;
+#[cfg(test)]
+pub mod envelope_precise_verify;
 pub mod event;
 pub mod pipe;
 mod sampler;

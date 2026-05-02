@@ -321,10 +321,10 @@ mod tests {
         println!("\n✅ 详细Attack测量结果:");
         result.print_report();
         
-        // 验证曲线形状 - 应该是凹曲线
+        // 验证曲线形状 - 修复后应该是线性曲线（ratio ≈ 1.0）
         assert!(
-            result.curve_analysis.ratio < 0.9,
-            "Attack应该是凹曲线（开始快），ratio应<0.9，实际={:.2}",
+            result.curve_analysis.ratio > 0.9 && result.curve_analysis.ratio < 1.1,
+            "Attack应该是线性曲线，ratio应在0.9-1.1之间，实际={:.2}",
             result.curve_analysis.ratio
         );
         
@@ -376,15 +376,15 @@ mod tests {
                 result.curve_analysis.ratio
             );
             
-            // 所有attack时间应该有相似的曲线形状（比值相近）
+            // 修复后应该是线性曲线（ratio ≈ 1.0）
             assert!(
-                result.curve_analysis.ratio > 0.6 && result.curve_analysis.ratio < 0.9,
-                "凹曲线ratio应在0.6-0.9之间"
+                result.curve_analysis.ratio > 0.9 && result.curve_analysis.ratio < 1.1,
+                "线性曲线ratio应在0.9-1.1之间"
             );
         }
         
         println!("└─────────────┴────────┴────────┴────────┘");
-        println!("\n结论: 曲线形状与attack时间无关，始终为凹曲线");
+        println!("\n结论: 曲线形状与attack时间无关，始终为线性曲线");
     }
     
     #[test]

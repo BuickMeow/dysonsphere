@@ -39,6 +39,8 @@ pub struct Envelope {
     allow_release: bool,
     /// Whether we've been killed (rapid release).
     killed: bool,
+    /// Starting value of current stage (for proper linear interpolation).
+    stage_start_value: f32,
 }
 
 /// Amplitude threshold below which a voice in release is considered done.
@@ -110,6 +112,7 @@ impl Envelope {
             sample_rate: sr,
             allow_release,
             killed: false,
+            stage_start_value: 0.0,
         };
 
         // Skip zero-duration delay
@@ -233,6 +236,8 @@ impl Envelope {
 
         self.stage = next;
         self.elapsed = 0;
+        // Update stage_start_value when entering a new stage
+        self.stage_start_value = self.value;
         self.advance_past_zero_stages();
     }
 
@@ -242,6 +247,8 @@ impl Envelope {
         }
         self.stage = stage;
         self.elapsed = 0;
+        // Update stage_start_value when entering a new stage
+        self.stage_start_value = self.value;
         self.advance_past_zero_stages();
     }
 
@@ -258,7 +265,7 @@ impl Envelope {
     }
 
     fn stage_start_value(&self) -> f32 {
-        self.value
+        self.stage_start_value
     }
 }
 
