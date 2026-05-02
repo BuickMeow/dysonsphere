@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use ds_soundfont::types::LoopMode;
+use dysonphere_soundfont::types::LoopMode;
 
 /// Sample playback state.
 ///

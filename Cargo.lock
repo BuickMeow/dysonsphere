@@ -3,24 +3,25 @@
 version = 4
 
 [[package]]
-name = "ds-core"
-version = "0.1.0"
-dependencies = [
- "ds-soundfont",
- "hound",
-]
-
-[[package]]
 name = "ds-examples"
 version = "0.1.0"
 dependencies = [
- "ds-core",
- "ds-soundfont",
+ "dysonphere-core",
+ "dysonphere-soundfont",
+ "hound",
+ "lazy_static",
+]
+
+[[package]]
+name = "dysonphere-core"
+version = "0.1.0"
+dependencies = [
+ "dysonphere-soundfont",
  "hound",
 ]
 
 [[package]]
-name = "ds-soundfont"
+name = "dysonphere-soundfont"
 version = "0.1.0"
 dependencies = [
  "soundfont",
@@ -31,6 +32,12 @@ name = "hound"
 version = "3.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "62adaabb884c94955b19907d60019f4e145d091c75345379e70d1ee696f7854f"
+
+[[package]]
+name = "lazy_static"
+version = "1.5.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bbd2bcb4c963f2ddae06a2efc7e9f3591312473c50c6685e1f298068316e66fe"
 
 [[package]]
 name = "soundfont"

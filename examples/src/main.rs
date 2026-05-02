@@ -1,15 +1,15 @@
-use ds_core::event::{ChannelConfigEvent, ChannelEvent, SynthEvent};
-use ds_core::pipe::{AudioPipe, AudioStreamParams, ChannelCount};
-use ds_core::soundfont::{SoundFontWrapper, SoundfontBase};
-use ds_core::Synthesizer;
+use dysonphere_core::event::{ChannelConfigEvent, ChannelEvent, SynthEvent};
+use dysonphere_core::pipe::{AudioPipe, AudioStreamParams, ChannelCount};
+use dysonphere_core::soundfont::{SoundFontWrapper, SoundfontBase};
+use dysonphere_core::Synthesizer;
 use hound::{WavSpec, WavWriter};
 use std::path::PathBuf;
 use std::sync::Arc;
 
-fn load_soundfont(path: &PathBuf, sample_rate: u32) -> Result<ds_soundfont::SoundFont, String> {
+fn load_soundfont(path: &PathBuf, sample_rate: u32) -> Result<dysonphere_soundfont::SoundFont, String> {
     match path.extension().and_then(|e| e.to_str()) {
-        Some("sf2") => ds_soundfont::sf2::load(path, sample_rate).map_err(|e| e.to_string()),
-        Some("sfz") => ds_soundfont::sfz::load(path, sample_rate).map_err(|e| e.to_string()),
+        Some("sf2") => dysonphere_soundfont::sf2::load(path, sample_rate).map_err(|e| e.to_string()),
+        Some("sfz") => dysonphere_soundfont::sfz::load(path, sample_rate).map_err(|e| e.to_string()),
         _ => Err("Unsupported format. Use .sf2 or .sfz files.".into()),
     }
 }
@@ -59,7 +59,7 @@ fn main() {
     let mut synth = Synthesizer::new(stream_params);
 
     // Send SetSoundfonts config event
-    let sf_base: Arc<dyn ds_core::soundfont::SoundfontBase> = Arc::new(wrapper);
+    let sf_base: Arc<dyn dysonphere_core::soundfont::SoundfontBase> = Arc::new(wrapper);
     synth.send_event(SynthEvent::Channel(
         0,
         ChannelEvent::Config(ChannelConfigEvent::SetSoundfonts(vec![sf_base])),

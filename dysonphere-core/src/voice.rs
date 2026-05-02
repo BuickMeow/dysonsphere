@@ -1,4 +1,4 @@
-use ds_soundfont::types::VoiceParams;
+use dysonphere_soundfont::types::VoiceParams;
 
 use crate::{envelope::Envelope, sampler::Sampler};
 
@@ -24,7 +24,7 @@ pub struct Voice {
 
 impl Voice {
     pub fn new(params: &VoiceParams, sample_rate: u32, key: u8, velocity: u8) -> Self {
-        let allow_release = params.loop_mode != ds_soundfont::types::LoopMode::LoopSustain;
+        let allow_release = params.loop_mode != dysonphere_soundfont::types::LoopMode::LoopSustain;
 
         Self {
             sampler: Sampler::new(

@@ -6,8 +6,8 @@ pub mod soundfont;
 pub mod synth;
 mod voice;
 
-pub use ds_soundfont::types::{EnvelopeDescriptor, LoopMode, VoiceParams};
-pub use ds_soundfont::SoundFont;
+pub use dysonphere_soundfont::types::{EnvelopeDescriptor, LoopMode, VoiceParams};
+pub use dysonphere_soundfont::SoundFont;
 pub use envelope::Envelope;
 pub use event::*;
 pub use pipe::{AudioPipe, AudioStreamParams, ChannelCount};

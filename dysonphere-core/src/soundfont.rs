@@ -1,4 +1,4 @@
-use ds_soundfont::types::VoiceParams;
+use dysonphere_soundfont::types::VoiceParams;
 
 use crate::pipe::AudioStreamParams;
 
@@ -56,11 +56,11 @@ impl SampleSoundfont {
 
         let sf = match path.extension().and_then(|e| e.to_str()) {
             Some("sf2") | Some("SF2") => {
-                ds_soundfont::sf2::load(path, stream_params.sample_rate)
+                dysonphere_soundfont::sf2::load(path, stream_params.sample_rate)
                     .map_err(|e| LoadError::Parse(e.to_string()))
             }
             Some("sfz") | Some("SFZ") => {
-                ds_soundfont::sfz::load(path, stream_params.sample_rate)
+                dysonphere_soundfont::sfz::load(path, stream_params.sample_rate)
                     .map_err(|e| LoadError::Parse(e.to_string()))
             }
             _ => return Err(LoadError::UnsupportedFormat),
@@ -90,9 +90,9 @@ impl SoundfontBase for SampleSoundfont {
     }
 }
 
-/// Wraps a raw `ds_soundfont::SoundFont` for the `SoundfontBase` trait.
+/// Wraps a raw `dysonphere_soundfont::SoundFont` for the `SoundfontBase` trait.
 pub struct SoundFontWrapper {
-    inner: ds_soundfont::SoundFont,
+    inner: dysonphere_soundfont::SoundFont,
     stream_params: AudioStreamParams,
     source_name: String,
     preset_cache: Vec<PresetInfo>,
@@ -100,7 +100,7 @@ pub struct SoundFontWrapper {
 
 impl SoundFontWrapper {
     pub fn new(
-        soundfont: ds_soundfont::SoundFont,
+        soundfont: dysonphere_soundfont::SoundFont,
         stream_params: AudioStreamParams,
         source_name: String,
     ) -> Self {

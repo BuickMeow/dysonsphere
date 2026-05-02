@@ -1,5 +1,5 @@
 [workspace]
-members = ["ds-soundfont", "ds-core", "examples"]
+members = ["dysonphere-soundfont", "dysonphere-core", "examples"]
 resolver = "3"
 
 [workspace.package]

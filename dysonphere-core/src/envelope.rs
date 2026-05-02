@@ -1,4 +1,4 @@
-use ds_soundfont::types::EnvelopeDescriptor;
+use dysonphere_soundfont::types::EnvelopeDescriptor;
 
 /// Envelope state machine (DAHDSR).
 ///

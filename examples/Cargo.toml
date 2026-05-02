@@ -4,7 +4,24 @@ edition.workspace = true
 version.workspace = true
 license = "LGPL-3.0"
 
+[[bin]]
+name = "ds-examples"
+path = "src/main.rs"
+
+[[bin]]
+name = "stereo-test"
+path = "src/stereo_test.rs"
+
+[[bin]]
+name = "taiyang-clone"
+path = "src/taiyang_clone.rs"
+
+[[bin]]
+name = "small-blocks"
+path = "src/small_blocks.rs"
+
 [dependencies]
-ds-core = { path = "../ds-core" }
-ds-soundfont = { path = "../ds-soundfont" }
+dysonphere-core = { path = "../dysonphere-core" }
+dysonphere-soundfont = { path = "../dysonphere-soundfont" }
 hound = "3.5"
+lazy_static = "1.4"

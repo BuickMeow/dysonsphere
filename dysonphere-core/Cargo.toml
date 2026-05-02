@@ -1,11 +1,11 @@
 [package]
-name = "ds-core"
+name = "dysonphere-core"
 edition.workspace = true
 version.workspace = true
 license = "LGPL-3.0"
 
 [dependencies]
-ds-soundfont = { path = "../ds-soundfont" }
+dysonphere-soundfont = { path = "../dysonphere-soundfont" }
 
 [dev-dependencies]
 hound = "3.5"
