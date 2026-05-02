@@ -59,11 +59,18 @@ impl Sampler {
         }
     }
 
-    /// Signal note release (for LoopSustain).
+    /// Signal note release.
     pub fn release(&mut self) {
-        if self.loop_mode == LoopMode::LoopSustain && !self.released {
-            self.released = true;
-            self.position = self.position_at_release + self.loop_end as f64;
+        match self.loop_mode {
+            LoopMode::LoopSustain if !self.released => {
+                self.released = true;
+                // Stop looping, continue playing from current position to sample_end
+                // (position stays where it was; the loop will stop on next cycle)
+            }
+            LoopMode::LoopContinuous => {
+                // Keep looping but envelope fade will handle it
+            }
+            _ => {} // NoLoop / already released: nothing to do
         }
     }
 

@@ -24,11 +24,11 @@ impl Default for EnvelopeDescriptor {
     fn default() -> Self {
         Self {
             delay: 0.0,
-            attack: 0.01,
+            attack: 0.001,
             hold: 0.0,
             decay: 0.0,
             sustain: 1.0,
-            release: 0.01,
+            release: 2.0,
         }
     }
 }

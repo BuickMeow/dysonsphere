@@ -24,8 +24,6 @@ pub struct Voice {
 
 impl Voice {
     pub fn new(params: &VoiceParams, sample_rate: u32, key: u8, velocity: u8) -> Self {
-        let allow_release = params.loop_mode != dysonphere_soundfont::types::LoopMode::LoopSustain;
-
         Self {
             sampler: Sampler::new(
                 params.sample.clone(),
@@ -36,7 +34,7 @@ impl Voice {
                 params.sample_end,
                 params.offset,
             ),
-            envelope: Envelope::new(params.envelope, sample_rate, allow_release, velocity),
+            envelope: Envelope::new(params.envelope, sample_rate, true, velocity),
             volume: params.volume,
             exclusive_class: params.exclusive_class,
             key,

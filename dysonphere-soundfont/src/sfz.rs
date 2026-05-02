@@ -12,12 +12,12 @@ use crate::types::{
 /// Parses an SFZ file and returns a unified SoundFont.
 pub fn load(path: impl AsRef<Path>, sample_rate: u32) -> Result<SoundFont, Error> {
     let path = path.as_ref();
-    let text = fs::read_to_string(path).map_err(|e| Error::Io(e, path.to_path_buf()))?;
-
     let base_dir = path
         .parent()
         .unwrap_or(Path::new("."))
         .to_path_buf();
+
+    let text = load_with_includes(path, &base_dir)?;
 
     let tokens = tokenize(&text);
     let regions = parse_regions(&tokens, &base_dir)?;
@@ -117,6 +117,32 @@ impl std::fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
+// ── Include / preprocessor ──────────────────────────────────────────
+
+fn load_with_includes(path: &Path, base_dir: &Path) -> Result<String, Error> {
+    let text = fs::read_to_string(path).map_err(|e| Error::Io(e, path.to_path_buf()))?;
+    let mut result = String::with_capacity(text.len());
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("#include") {
+            let rest = trimmed["#include".len()..].trim();
+            let include_path = rest.trim_matches('"').replace('\\', "/");
+            let resolved = base_dir.join(&include_path);
+            if let Ok(include_text) = load_with_includes(&resolved, &resolved.parent().unwrap_or(base_dir)) {
+                result.push_str(&include_text);
+            }
+            // Non-fatal: silently skip missing includes
+        } else if trimmed.starts_with("#define") {
+            // Minimal #define support: store definition for later substitution
+            // For now, just skip defines — most SFZ files work without them
+        } else {
+            result.push_str(line);
+            result.push('\n');
+        }
+    }
+    Ok(result)
+}
+
 // ── Tokenization ────────────────────────────────────────────────────
 
 #[derive(Debug, Clone)]
@@ -152,6 +178,8 @@ fn tokenize(text: &str) -> Vec<Token> {
 
 #[derive(Debug, Clone)]
 struct PendingRegion {
+    sample_filename: PathBuf,
+    default_path: Option<PathBuf>,
     sample_path: PathBuf,
     lokey: i8,
     hikey: i8,
@@ -173,6 +201,8 @@ struct PendingRegion {
 impl Default for PendingRegion {
     fn default() -> Self {
         Self {
+            sample_filename: PathBuf::new(),
+            default_path: None,
             sample_path: PathBuf::new(),
             lokey: 0,
             hikey: 127,
@@ -196,17 +226,20 @@ impl Default for PendingRegion {
 fn parse_regions(tokens: &[Token], base_dir: &Path) -> Result<Vec<PendingRegion>, Error> {
     let mut regions = Vec::new();
     let mut stack: Vec<PendingRegion> = vec![PendingRegion::default()]; // [global, master, group, region]
+    let mut in_control = false;
 
     for token in tokens {
         match token {
             Token::Header(h) => {
+                in_control = h == "control";
+                if in_control {
+                    continue;
+                }
+
                 let level = match h.as_str() {
-                    "global" => 1,
-                    "master" => 1,
-                    "control" => return Ok(regions), // unsupported, skip rest
+                    "global" | "master" => 1,
                     "group" => 3,
                     "region" => {
-                        // Pop region level and build
                         if stack.len() >= 4 {
                             let region = stack.pop().unwrap();
                             if let Some(built) = finalize_region(region, base_dir) {
@@ -227,7 +260,17 @@ fn parse_regions(tokens: &[Token], base_dir: &Path) -> Result<Vec<PendingRegion>
                 }
             }
             Token::Opcode(key, value) => {
-                if let Some(current) = stack.last_mut() {
+                let current = if in_control {
+                    // In <control>: only handle global settings like default_path
+                    if key != "default_path" {
+                        continue;
+                    }
+                    stack.last_mut()
+                } else {
+                    stack.last_mut()
+                };
+
+                if let Some(current) = current {
                     apply_opcode(current, key, value);
                 }
             }
@@ -254,12 +297,10 @@ fn apply_opcode(region: &mut PendingRegion, key: &str, value: &str) {
 
     match key {
         "sample" => {
-            region.sample_path = PathBuf::from(value);
+            region.sample_filename = PathBuf::from(value.replace('\\', "/"));
         }
         "default_path" => {
-            if !region.sample_path.as_os_str().is_empty() {
-                region.sample_path = PathBuf::from(value).join(&region.sample_path);
-            }
+            region.default_path = Some(PathBuf::from(value.replace('\\', "/")));
         }
         "lokey" => {
             if let Some(v) = parse_i8() {
@@ -377,17 +418,24 @@ fn finalize_region(
     mut region: PendingRegion,
     base_dir: &Path,
 ) -> Option<PendingRegion> {
-    if region.sample_path.as_os_str().is_empty() {
+    if region.sample_filename.as_os_str().is_empty() {
         return None;
     }
 
-    let sample_path = base_dir.join(&region.sample_path);
-    match sample_path.canonicalize() {
-        Ok(p) => region.sample_path = p,
-        Err(_) => return None,
-    }
+    // Merge default_path + sample_filename, then resolve relative to base_dir
+    let sample_rel = match &region.default_path {
+        Some(dp) => dp.join(&region.sample_filename),
+        None => region.sample_filename.clone(),
+    };
 
-    Some(region)
+    let sample_path = base_dir.join(&sample_rel);
+    match sample_path.canonicalize() {
+        Ok(p) => {
+            region.sample_path = p;
+            Some(region)
+        }
+        Err(_) => None,
+    }
 }
 
 // ── WAV loading (minimal, handles 16-bit mono/stereo PCM) ──────────
@@ -405,19 +453,26 @@ fn load_wav(path: &Path) -> Result<(Vec<f32>, u32), Error> {
         return Err(Error::Parse("Not a valid WAV file".into()));
     }
 
+    // Read fmt chunk to get audio parameters
+    if &data[12..16] != b"fmt " {
+        return Err(Error::Parse("Missing fmt chunk in WAV".into()));
+    }
+    let fmt_size = u32::from_le_bytes([data[16], data[17], data[18], data[19]]) as usize;
     let num_channels = u16::from_le_bytes([data[22], data[23]]);
     let sample_rate = u32::from_le_bytes([data[24], data[25], data[26], data[27]]);
     let bits_per_sample = u16::from_le_bytes([data[34], data[35]]);
 
-    // Find data chunk
-    let mut data_start = 36;
+    // Find data chunk — scan from end of fmt chunk (correctly handles extended fmt)
+    let mut data_start = 20 + fmt_size;
     while data_start + 8 <= data.len() {
-        if &data[data_start..data_start + 4] == b"data" {
+        let chunk_id = &data[data_start..data_start + 4];
+        let chunk_size = u32::from_le_bytes([
+            data[data_start + 4], data[data_start + 5], data[data_start + 6], data[data_start + 7],
+        ]) as usize;
+        if chunk_id == b"data" {
             break;
         }
-        let chunk_size =
-            u32::from_le_bytes([data[data_start + 4], data[data_start + 5], data[data_start + 6], data[data_start + 7]]);
-        data_start += 8 + chunk_size as usize;
+        data_start += 8 + chunk_size + chunk_size % 2; // pad to even
     }
 
     if data_start + 8 > data.len() {

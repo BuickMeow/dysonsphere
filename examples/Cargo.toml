@@ -20,6 +20,14 @@ path = "src/taiyang_clone.rs"
 name = "small-blocks"
 path = "src/small_blocks.rs"
 
+[[bin]]
+name = "sfz-test"
+path = "src/sfz_test.rs"
+
+[[bin]]
+name = "sfz-play"
+path = "src/sfz_play.rs"
+
 [dependencies]
 dysonphere-core = { path = "../dysonphere-core" }
 dysonphere-soundfont = { path = "../dysonphere-soundfont" }
