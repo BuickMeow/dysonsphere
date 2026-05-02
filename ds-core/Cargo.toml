@@ -2,7 +2,7 @@
 name = "ds-core"
 edition.workspace = true
 version.workspace = true
-license.workspace = true
+license = "LGPL-3.0"
 
 [dependencies]
 ds-soundfont = { path = "../ds-soundfont" }

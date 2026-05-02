@@ -1,10 +1,12 @@
+use ds_core::event::{ChannelConfigEvent, ChannelEvent, SynthEvent};
 use ds_core::pipe::{AudioPipe, AudioStreamParams, ChannelCount};
+use ds_core::soundfont::{SoundFontWrapper, SoundfontBase};
 use ds_core::Synthesizer;
-use ds_soundfont::SoundFont;
 use hound::{WavSpec, WavWriter};
 use std::path::PathBuf;
+use std::sync::Arc;
 
-fn load_soundfont(path: &PathBuf, sample_rate: u32) -> Result<SoundFont, String> {
+fn load_soundfont(path: &PathBuf, sample_rate: u32) -> Result<ds_soundfont::SoundFont, String> {
     match path.extension().and_then(|e| e.to_str()) {
         Some("sf2") => ds_soundfont::sf2::load(path, sample_rate).map_err(|e| e.to_string()),
         Some("sfz") => ds_soundfont::sfz::load(path, sample_rate).map_err(|e| e.to_string()),
@@ -42,19 +44,32 @@ fn main() {
         }
     };
 
-    eprintln!("Loaded {} presets", soundfont.presets.len());
-    for preset in &soundfont.presets {
-        eprintln!("  Bank {} Program {}: {} ({} regions)",
-            preset.bank, preset.program, preset.name, preset.regions.len());
+    // Wrap in SoundfontBase for the event-based API
+    let wrapper = SoundFontWrapper::new(
+        soundfont,
+        stream_params,
+        sf_path.to_string_lossy().to_string(),
+    );
+
+    eprintln!("Loaded {} presets", wrapper.presets().len());
+    for p in wrapper.presets() {
+        eprintln!("  Bank {} Program {}: {}", p.bank, p.program, p.name);
     }
 
-    let mut synth = Synthesizer::new(stream_params, soundfont);
+    let mut synth = Synthesizer::new(stream_params);
 
-    // Play a C major scale
+    // Send SetSoundfonts config event
+    let sf_base: Arc<dyn ds_core::soundfont::SoundfontBase> = Arc::new(wrapper);
+    synth.send_event(SynthEvent::Channel(
+        0,
+        ChannelEvent::Config(ChannelConfigEvent::SetSoundfonts(vec![sf_base])),
+    ));
+
+    // Play a C major scale using the event-based API
     let notes = [60, 62, 64, 65, 67, 69, 71, 72];
     let seconds_per_note = 0.5;
     let note_samples = (seconds_per_note * sample_rate as f32) as usize;
-    let total_samples = note_samples * notes.len() + sample_rate as usize; // extra release
+    let total_samples = note_samples * notes.len() + sample_rate as usize;
 
     let mut buffer = vec![0.0f32; total_samples];
 
