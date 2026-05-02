@@ -1,6 +1,8 @@
-[package]
-name = "dysonsphere"
-version = "0.1.0"
-edition = "2024"
+[workspace]
+members = ["ds-soundfont", "ds-core", "examples"]
+resolver = "3"
 
-[dependencies]
+[workspace.package]
+edition = "2024"
+version = "0.1.0"
+license = "MIT"

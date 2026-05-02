@@ -1,0 +1,8 @@
+[package]
+name = "ds-soundfont"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+soundfont = "0.1"

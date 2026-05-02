@@ -1,0 +1,10 @@
+[package]
+name = "ds-examples"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+ds-core = { path = "../ds-core" }
+ds-soundfont = { path = "../ds-soundfont" }
+hound = "3.5"

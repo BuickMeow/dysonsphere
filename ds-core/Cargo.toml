@@ -1,0 +1,11 @@
+[package]
+name = "ds-core"
+edition.workspace = true
+version.workspace = true
+license.workspace = true
+
+[dependencies]
+ds-soundfont = { path = "../ds-soundfont" }
+
+[dev-dependencies]
+hound = "3.5"
