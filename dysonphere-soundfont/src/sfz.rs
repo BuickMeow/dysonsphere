@@ -78,7 +78,11 @@ pub fn load(path: impl AsRef<Path>, sample_rate: u32) -> Result<SoundFont, Error
             original_sample_rate: orig_rate,
             volume,
             pan: region.pan as f32,
-            loop_mode: region.loop_mode,
+            loop_mode: if loop_start == loop_end && region.loop_mode != LoopMode::NoLoop {
+                LoopMode::NoLoop // protection: no valid loop range
+            } else {
+                region.loop_mode
+            },
             loop_start,
             loop_end,
             sample_end,

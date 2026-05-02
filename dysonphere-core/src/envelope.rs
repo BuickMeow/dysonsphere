@@ -57,9 +57,9 @@ impl Envelope {
         let sr = sample_rate as f32;
 
         // Velocity-to-release: softer notes decay faster, louder notes ring longer.
-        // Range: 0.2× (vel=0) → 1.0× (vel=127), floor 0.05s guards against zero-duration data.
+        // Range: 0.5× (vel=0) → 1.0× (vel=127), floor 0.2s for musical decay.
         let vel_norm = vel as f32 / 127.0;
-        let release = (descriptor.release * (0.2 + vel_norm * 0.8)).max(0.05);
+        let release = (descriptor.release * (0.5 + vel_norm * 0.5)).max(0.2);
 
         let stages = [
             // Delay
@@ -80,7 +80,7 @@ impl Envelope {
             // Decay
             StageParams {
                 target: descriptor.sustain,
-                duration_samples: (descriptor.decay * sr).round() as u32,
+                duration_samples: (descriptor.decay.max(0.001) * sr).round() as u32,
             },
             // Sustain
             StageParams {
@@ -475,7 +475,7 @@ mod tests {
         env.release();
 
         let dur = samples_until_finished(&mut env);
-        let expected_min = (0.05 * sr as f32) as usize;
+        let expected_min = (0.2 * sr as f32) as usize;
         assert!(dur >= expected_min,
             "release with zero descriptor should have floor: got {dur} samples, expected >= {expected_min}");
     }
