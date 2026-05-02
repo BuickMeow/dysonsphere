@@ -113,13 +113,16 @@ impl Sampler {
         a + (b - a) * frac
     }
 
-    /// Get sample at index, returning 0.0 for out-of-bounds.
+    /// Get sample at index, returning last valid value for out-of-bounds.
+    /// For NoLoop/OneShot, returns the last sample instead of 0.0 so the
+    /// envelope can continue fading naturally after the sample ends.
     #[inline]
     fn get(&self, idx: usize) -> f32 {
         if (!matches!(self.loop_mode, LoopMode::LoopContinuous) || self.released)
             && idx >= self.sample_end as usize {
-                return 0.0;
-            }
+                return self.data.get(self.sample_end as usize - 1)
+                    .copied().unwrap_or(0.0);
+        }
         self.data.get(idx).copied().unwrap_or(0.0)
     }
 }

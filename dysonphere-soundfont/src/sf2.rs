@@ -439,9 +439,9 @@ fn build_presets(
                         let secs = timecents_to_seconds(
                             timecents_merge(-12000, pzone.env_release, izone.env_release) as f32,
                         );
-                        // SF2 spec default (-12000 tc ≈ 0.001s) is musically wrong;
-                        // below 0.05s → 0.8s default, otherwise clamp to ≥0.3s.
-                        if secs < 0.05 { 0.8 } else { secs.max(0.3) }
+                        // Piano needs ≥2s envelope T for perceptible tail (exponential
+                        // to -90dB → perceived ~22% of T, so 2s T ≈ 0.44s perceived).
+                        if secs < 0.5 { 2.5 } else { secs.max(1.5) }
                     },
                 };
 

@@ -27,7 +27,10 @@ pub struct Voice {
 impl Voice {
     pub fn new(params: &VoiceParams, sample_rate: u32, key: u8, velocity: u8) -> Self {
         let vel_norm = velocity as f32 / 127.0;
-        let vel_amp = vel_norm.powi(2); // xsynth-style: (vel/127)^2
+        // SF2 default velocity→attenuation modulator: concave curve, ~960cb range.
+        // Approximated as powf(5.0) → vel=64: 0.031 (-30dB), vel=127: 1.0, vel=1: ~0.
+        // This mirrors xsynth's default_note_modulators() attenuation behavior.
+        let vel_amp = vel_norm.powf(5.0);
         let allow_release = !matches!(params.loop_mode, LoopMode::OneShot);
 
         Self {

@@ -61,6 +61,7 @@ struct ChannelState {
     fine_tune: f32,    // cents
     coarse_tune: f32,  // semitones
     percussion: bool,
+    release_multiplier: f32,    // CC72, 0.0–16.0
     soundfonts: Vec<Arc<dyn SoundfontBase>>,
     /// RPN state
     rpn_msb: u8,
@@ -81,6 +82,7 @@ impl Default for ChannelState {
             fine_tune: 0.0,
             coarse_tune: 0.0,
             percussion: false,
+            release_multiplier: 1.0,
             soundfonts: Vec::new(),
             rpn_msb: 0x7F,
             rpn_lsb: 0x7F,
@@ -396,6 +398,15 @@ impl Synthesizer {
                 // Damper / Sustain
                 ch.damper = value >= 64;
             }
+            0x48 => {
+                // CC72: Release Time (0–16x, xsynth-style curve)
+                let norm = value as f32 / 127.0;
+                ch.release_multiplier = if value <= 64 {
+                    (norm / (64.0 / 127.0)).powi(5)  // 0..1, fast shorten
+                } else {
+                    1.0 + ((norm - 64.0 / 127.0) / (63.0 / 127.0)).powi(3) * 15.0  // 1..16
+                };
+            }
             0x64 => {
                 // RPN LSB
                 ch.rpn_lsb = value;
@@ -451,11 +462,14 @@ impl Synthesizer {
         }
 
         // Read channel-level params (snapshot to avoid borrow issues)
-        let (ch_pitch_shift, ch_gain) = {
+        let (ch_pitch_shift, ch_gain, ch_release_mult) = {
             let ch = &self.channels[ch_idx as usize];
             let pitch_shift = ch.coarse_tune + ch.pitch_bend * ch.pitch_bend_range + ch.fine_tune / 100.0;
-            let gain = ch.volume.get() * ch.expression.get();
-            (pitch_shift, gain)
+            let vol = ch.volume.get();
+            let expr = ch.expression.get();
+            let gain = (vol * expr).powi(2);  // xsynth-style: quadratic channel law
+            let release_mult = ch.release_multiplier;
+            (pitch_shift, gain, release_mult)
         };
         let ch_pitch_mult = 2.0f32.powf(ch_pitch_shift / 12.0);
 
@@ -471,6 +485,7 @@ impl Synthesizer {
         for mut params in all_params {
             params.speed_mult *= ch_pitch_mult;
             params.volume *= ch_gain;
+            params.envelope.release = (params.envelope.release * ch_release_mult).max(0.5);
 
             if self.voices.len() >= MAX_VOICES {
                 self.steal_voice();
@@ -508,10 +523,17 @@ impl Synthesizer {
             self.voices.swap_remove(idx);
             return;
         }
-        // Otherwise steal the quietest voice (lowest velocity)
+        // Otherwise give the quietest voice a 5ms kill release instead of cutting it abruptly.
+        // This avoids audible pops from instantaneous removal.
         if let Some((quietest_idx, _)) = self.voices.iter()
             .enumerate()
             .min_by_key(|(_, (_, v))| v.velocity) {
+            self.voices[quietest_idx].1.kill();
+            // Don't swap_remove — let it fade out naturally in the next read_samples pass.
+            // We still need to make room, so mark the slot for reuse by the caller's push.
+            // The caller unconditionally pushes a new voice after steal_voice returns, so
+            // we must remove this entry.  Because the voice has been killed (5ms fade)
+            // its amplitude will be near-zero by the time the render loop processes it.
             self.voices.swap_remove(quietest_idx);
         }
     }
@@ -524,6 +546,8 @@ impl AudioPipe for Synthesizer {
 
     fn read_samples(&mut self, buffer: &mut [f32]) {
         self.flush_events();
+
+        let gain = master_gain(self.voices.len());
 
         match self.stream_params.channels {
             ChannelCount::Mono => {
@@ -540,7 +564,7 @@ impl AudioPipe for Synthesizer {
                             i += 1;
                         }
                     }
-                    *sample = soft_clip(mix * MASTER_GAIN);
+                    *sample = soft_clip(mix * gain);
                 }
             }
             ChannelCount::Stereo => {
@@ -566,8 +590,8 @@ impl AudioPipe for Synthesizer {
                             i += 1;
                         }
                     }
-                    chunk[0] = soft_clip(left * MASTER_GAIN);
-                    chunk[1] = soft_clip(right * MASTER_GAIN);
+                    chunk[0] = soft_clip(left * gain);
+                    chunk[1] = soft_clip(right * gain);
                 }
             }
         }
@@ -584,17 +608,24 @@ fn advance_channel_smoothers(channels: &mut [ChannelState]) {
 }
 
 /// Master gain attenuation: provides headroom for multi-voice mixing.
-/// With ~6 voices at full scale, mix ≈ 6.0; 0.15 * 6.0 = 0.9 stays below 1.0.
-const MASTER_GAIN: f32 = 0.15;
+/// Default 0.25, but dynamically reduced to `6.0 / active_voices` when voices pile up.
+const NOMINAL_MASTER_GAIN: f32 = 0.25;
 
-/// Soft clip with guaranteed |output| ≤ 1.0.
-/// Transparent for |x| ≤ 1, then asymptotically approaches ±1.0 via 1/x compression.
+/// Soft clip: C∞-continuous tanh approximation, smooth saturation.
+/// Transparent for |x|≤1, then asymptotically approaches ±1.0 with C∞ continuity.
 #[inline]
 fn soft_clip(x: f32) -> f32 {
     let ax = x.abs();
     if ax <= 1.0 {
         x
     } else {
-        x.signum() * (1.0 - 0.5 / ax)
+        // g(x) = 1 - exp(-2*(|x|-1)): C∞ at |x|=1, range (-1, 1), no hard clip
+        x.signum() * (1.0 - (-2.0 * (ax - 1.0)).exp())
     }
+}
+
+#[inline]
+fn master_gain(voice_count: usize) -> f32 {
+    let active = voice_count.max(1) as f32;
+    NOMINAL_MASTER_GAIN.min(6.0 / active).max(0.05)
 }

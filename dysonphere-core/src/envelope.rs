@@ -42,24 +42,26 @@ pub struct Envelope {
 }
 
 /// Amplitude threshold below which a voice in release is considered done.
+/// -90dB = 16-bit LSB; inaudible in any reasonable listening scenario.
 const SILENCE_THRESHOLD: f32 = 1.0 / 32768.0;
-/// Perceived-silence target for release curve. -60dB is the audio industry standard.
-/// Using SILENCE_THRESHOLD (-90dB) causes perceived release to be only 40-50% of intended.
-const RELEASE_TARGET: f32 = 0.001;
+/// Perceived-silence target for release curve.  Uses SILENCE_THRESHOLD (-90dB)
+/// so that the last audible moment is genuinely inaudible, preventing an
+/// audible click at the 0.001→0.0 transition that -60dB would produce.
+const RELEASE_TARGET: f32 = SILENCE_THRESHOLD;
 
 impl Envelope {
     pub fn new(
         descriptor: EnvelopeDescriptor,
         sample_rate: u32,
         allow_release: bool,
-        vel: u8,
+        _vel: u8,
     ) -> Self {
         let sr = sample_rate as f32;
 
-        // Velocity-to-release: softer notes decay faster, louder notes ring longer.
-        // Range: 0.5× (vel=0) → 1.0× (vel=127), floor 0.2s for musical decay.
-        let vel_norm = vel as f32 / 127.0;
-        let release = (descriptor.release * (0.5 + vel_norm * 0.5)).max(0.2);
+        // Release floor 1.0s ensures minimum perceptible tail for piano-class
+        // instruments even without CC72.  (Exponential curve to -90dB → perceived
+        // ~22% of T, so 1.0s T ≈ 0.22s perceived — barely acceptable minimum.)
+        let release = descriptor.release.max(1.0);
 
         let stages = [
             // Delay
@@ -300,7 +302,7 @@ mod tests {
             hold: 0.01,
             decay: 0.05,
             sustain: 0.7,
-            release: 0.2,
+            release: 1.0,
         };
         let sr = 44100;
         let mut env = Envelope::new(desc, sr, true, 127);
@@ -332,8 +334,8 @@ mod tests {
         // Release
         env.release();
         let release_samples = samples_until_finished(&mut env);
-        let expected = (0.2 * sr as f32) as usize;
-        let epsilon = (0.02 * sr as f32) as usize;
+        let expected = (1.0 * sr as f32) as usize;
+        let epsilon = (0.05 * sr as f32) as usize;
         assert!(
             release_samples >= expected - epsilon && release_samples <= expected + epsilon,
             "release samples: {} (expected ~{})", release_samples, expected
@@ -349,7 +351,7 @@ mod tests {
             hold: 0.0,
             decay: 0.0,
             sustain: 1.0,
-            release: 0.1,
+            release: 1.2,
         };
         let sr = 44100;
         let mut env = Envelope::new(desc, sr, true, 100);
@@ -365,7 +367,7 @@ mod tests {
         env.release();
 
         // Sample at 25%, 50%, 75% of release
-        let total = (0.1 * sr as f32) as usize;
+        let total = (1.2 * sr as f32) as usize;
         let p25 = total / 4;
         let p50 = total / 2;
         let p75 = 3 * total / 4;
@@ -395,39 +397,39 @@ mod tests {
     }
 
     #[test]
-    fn velocity_affects_release() {
+    fn velocity_no_longer_affects_release() {
+        // Verifies the v5 fix: velocity should NOT shorten release duration.
         let sr = 44100;
         let desc = EnvelopeDescriptor {
             delay: 0.0, attack: 0.0, hold: 0.0, decay: 0.0,
             sustain: 1.0,
-            release: 0.5,
+            release: 1.5,
         };
-
-        let mut env_soft = Envelope::new(desc, sr, true, 1);
-        let mut env_loud = Envelope::new(desc, sr, true, 127);
+        let _sr = 44100;
+        let mut env_loud = Envelope::new(desc, _sr, true, 127);
+        let mut env_soft = Envelope::new(desc, _sr, true, 64);
 
         // Skip to sustain
         for _ in 0..100 {
-            env_soft.process();
             env_loud.process();
+            env_soft.process();
         }
-        env_soft.release();
         env_loud.release();
+        env_soft.release();
 
-        let soft_dur = samples_until_finished(&mut env_soft);
         let loud_dur = samples_until_finished(&mut env_loud);
+        let soft_dur = samples_until_finished(&mut env_soft);
 
-        // Soft note (vel=1) should have shorter release than loud note (vel=127)
-        // vel_factor: 0.2 + 1/127*0.8 ≈ 0.206 vs 0.2 + 1.0*0.8 = 1.0
-        // ratio ≈ 0.206
-        let ratio = soft_dur as f32 / loud_dur as f32;
-        assert!(ratio < 0.8, "soft release ({soft_dur} samples) should be shorter than loud ({loud_dur} samples), ratio={ratio:.2}");
-        assert!(ratio > 0.1, "soft release should not be too short");
+        // Release duration should be the same regardless of velocity
+        let diff = (loud_dur as isize - soft_dur as isize).unsigned_abs();
+        let tolerance = (0.01 * sr as f32) as usize; // 10ms tolerance for float rounding
+        assert!(diff <= tolerance,
+            "release should be velocity-independent: vel=127: {loud_dur}, vel=64: {soft_dur}, diff={diff}");
     }
 
     #[test]
     fn velocity_affects_volume_chain() {
-        // Verify that velocity-to-volume follows square law in Voice
+        // Verify that velocity-to-volume follows powf(5.0) law in Voice
         let sr = 44100;
         let desc = EnvelopeDescriptor::default();
         let params = VoiceParams {
@@ -451,8 +453,8 @@ mod tests {
         let vol_soft = voice_soft.volume;
         let vol_silent = voice_silent.volume;
 
-        // Square law: (64/127)^2 / (127/127)^2 = (64/127)^2 ≈ 0.254
-        let expected_ratio = (64.0f32 / 127.0f32).powi(2);
+        // powf(5.0): (64/127)^5 ≈ 0.504^5 ≈ 0.032
+        let expected_ratio = (64.0f32 / 127.0f32).powf(5.0);
         let actual_ratio = vol_soft / vol_loud;
         assert!((actual_ratio - expected_ratio).abs() < 0.01,
             "vel=64/127 ratio: expected {expected_ratio:.4}, got {actual_ratio:.4}");
@@ -475,7 +477,7 @@ mod tests {
         env.release();
 
         let dur = samples_until_finished(&mut env);
-        let expected_min = (0.2 * sr as f32) as usize;
+        let expected_min = (1.0 * sr as f32) as usize;
         assert!(dur >= expected_min,
             "release with zero descriptor should have floor: got {dur} samples, expected >= {expected_min}");
     }
