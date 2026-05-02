@@ -53,9 +53,10 @@ impl Envelope {
     ) -> Self {
         let sr = sample_rate as f32;
 
-        // Apply velocity scaling to release (soft notes release faster)
-        let vel_factor = vel as f32 / 127.0;
-        let release = descriptor.release + vel_factor * 0.0; // Reserve for vel2release
+        // Velocity-to-release: softer notes decay faster, louder notes ring longer.
+        // Range: 0.2× (vel=0) → 1.0× (vel=127), floor 0.15s for musical decay.
+        let vel_norm = vel as f32 / 127.0;
+        let release = (descriptor.release * (0.2 + vel_norm * 0.8)).max(0.15);
 
         let stages = [
             // Delay

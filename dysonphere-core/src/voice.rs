@@ -24,6 +24,9 @@ pub struct Voice {
 
 impl Voice {
     pub fn new(params: &VoiceParams, sample_rate: u32, key: u8, velocity: u8) -> Self {
+        let vel_norm = velocity as f32 / 127.0;
+        let vel_amp = vel_norm.powi(2); // xsynth-style: (vel/127)^2
+
         Self {
             sampler: Sampler::new(
                 params.sample.clone(),
@@ -35,7 +38,7 @@ impl Voice {
                 params.offset,
             ),
             envelope: Envelope::new(params.envelope, sample_rate, true, velocity),
-            volume: params.volume,
+            volume: params.volume * vel_amp,
             exclusive_class: params.exclusive_class,
             key,
             velocity,

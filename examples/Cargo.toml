@@ -28,6 +28,10 @@ path = "src/sfz_test.rs"
 name = "sfz-play"
 path = "src/sfz_play.rs"
 
+[[bin]]
+name = "vel-test"
+path = "src/vel_test.rs"
+
 [dependencies]
 dysonphere-core = { path = "../dysonphere-core" }
 dysonphere-soundfont = { path = "../dysonphere-soundfont" }
