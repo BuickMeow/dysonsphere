@@ -179,9 +179,10 @@ impl Envelope {
                             }
                         }
                         Stage::Attack => {
-                            // Concave (quicker attack start)
-                            let curved = 1.0 - (1.0 - t).powi(2);
-                            self.value = start + (params.target - start) * curved;
+                            // Linear attack curve for natural sound
+                            // Fixed: Changed from concave (1.0 - (1.0-t)^2) to linear (t)
+                            // Reason: Concave curve caused "heavy/hard" attack sound
+                            self.value = start + (params.target - start) * t;
                         }
                         _ => {
                             self.value = start + (params.target - start) * t;

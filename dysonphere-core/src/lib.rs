@@ -1,4 +1,12 @@
 mod envelope;
+#[cfg(test)]
+pub mod envelope_tracker_test;
+#[cfg(test)]
+pub mod envelope_debug_analysis;
+#[cfg(test)]
+pub mod envelope_fix_proposal;
+#[cfg(test)]
+pub mod envelope_fix_verification;
 pub mod event;
 pub mod pipe;
 mod sampler;
