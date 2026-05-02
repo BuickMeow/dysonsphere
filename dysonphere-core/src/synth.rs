@@ -317,7 +317,17 @@ impl Synthesizer {
             }
             ControlEvent::Damper(v) => {
                 if let Some(ch) = self.channels.get_mut(ch_idx as usize) {
+                    let was_on = ch.damper;
                     ch.damper = v;
+                    if was_on && !v {
+                        // Damper released — release all sustained voices on this channel
+                        for (vch, voice) in &mut self.voices {
+                            if *vch == ch_idx && voice.damper_sustained {
+                                voice.damper_sustained = false;
+                                voice.note_off();
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -362,15 +372,13 @@ impl Synthesizer {
             0x06 => {
                 // Data Entry MSB — RPN parameter value
                 if ch.rpn_msb == 0 && ch.rpn_lsb == 0 {
-                    // Pitch Bend Range
+                    // Pitch Bend Range (semitones)
                     ch.pitch_bend_range = value as f32;
                 } else if ch.rpn_msb == 0 && ch.rpn_lsb == 1 {
-                    // Fine Tune
-                    let val: u16 = ((ch.rpn_msb as u16) << 7) | ch.rpn_lsb as u16;
-                    let val = (val as f32 - 8192.0) / 8192.0 * 100.0;
-                    ch.fine_tune = val;
+                    // Fine Tune: value 0–127 centered at 64, ±100 cents
+                    ch.fine_tune = (value as f32 - 64.0) * 100.0 / 64.0;
                 } else if ch.rpn_msb == 0 && ch.rpn_lsb == 2 {
-                    // Coarse Tune
+                    // Coarse Tune: value 0–127 centered at 64, ±64 semitones
                     ch.coarse_tune = value as f32 - 64.0;
                 }
             }
@@ -445,10 +453,9 @@ impl Synthesizer {
 
     fn note_off_internal(&mut self, ch_idx: u32, key: u8, damper: bool) {
         for (vch, voice) in &mut self.voices {
-            if *vch == ch_idx && voice.key == key {
+            if *vch == ch_idx && voice.key == key && !voice.is_releasing() {
                 if damper {
-                    // With damper on, just mark as sustaining but don't release
-                    // In a full implementation, track damper state per voice
+                    voice.damper_sustained = true;
                 } else {
                     voice.note_off();
                 }
@@ -493,7 +500,7 @@ impl AudioPipe for Synthesizer {
                             i += 1;
                         }
                     }
-                    *sample = mix;
+                    *sample = mix.clamp(-1.0, 1.0);
                 }
             }
             ChannelCount::Stereo => {
@@ -518,8 +525,8 @@ impl AudioPipe for Synthesizer {
                             i += 1;
                         }
                     }
-                    chunk[0] = left;
-                    chunk[1] = right;
+                    chunk[0] = left.clamp(-1.0, 1.0);
+                    chunk[1] = right.clamp(-1.0, 1.0);
                 }
             }
         }

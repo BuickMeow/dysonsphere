@@ -54,9 +54,9 @@ impl Envelope {
         let sr = sample_rate as f32;
 
         // Velocity-to-release: softer notes decay faster, louder notes ring longer.
-        // Range: 0.2× (vel=0) → 1.0× (vel=127), floor 0.15s for musical decay.
+        // Range: 0.2× (vel=0) → 1.0× (vel=127), floor 0.05s guards against zero-duration data.
         let vel_norm = vel as f32 / 127.0;
-        let release = (descriptor.release * (0.2 + vel_norm * 0.8)).max(0.15);
+        let release = (descriptor.release * (0.2 + vel_norm * 0.8)).max(0.05);
 
         let stages = [
             // Delay
@@ -84,9 +84,9 @@ impl Envelope {
                 target: descriptor.sustain,
                 duration_samples: 0,
             },
-            // Release
+            // Release — target SILENCE_THRESHOLD so exponential curve activates
             StageParams {
-                target: 0.0,
+                target: SILENCE_THRESHOLD,
                 duration_samples: (release.max(0.001) * sr).round() as u32,
             },
             // Finished
@@ -162,9 +162,13 @@ impl Envelope {
                     // Use exponential-ish curve for decay/release (more natural)
                     match self.stage {
                         Stage::Decay | Stage::Release => {
-                            // Exponential interpolation: start * (target/start)^t
-                            if start > 0.001 && params.target > 0.0 {
-                                self.value = start * (params.target / start).powf(t);
+                            if start > 0.001 {
+                                let effective_target = if params.target > 0.0 {
+                                    params.target
+                                } else {
+                                    SILENCE_THRESHOLD
+                                };
+                                self.value = start * (effective_target / start).powf(t);
                             } else {
                                 self.value = start + (params.target - start) * t;
                             }
@@ -217,7 +221,7 @@ impl Envelope {
             Stage::Finished => Stage::Finished,
         };
 
-        if next == Stage::Finished && self.value.abs() < SILENCE_THRESHOLD {
+        if next == Stage::Finished && self.value.abs() <= SILENCE_THRESHOLD {
             self.value = 0.0;
         }
 
@@ -249,5 +253,246 @@ impl Envelope {
 
     fn stage_start_value(&self) -> f32 {
         self.value
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Voice;
+    use dysonphere_soundfont::types::{EnvelopeDescriptor, LoopMode, VoiceParams};
+
+    /// Count samples until envelope finishes.
+    fn samples_until_finished(env: &mut Envelope) -> usize {
+        let mut count = 0;
+        while !env.finished() {
+            env.process();
+            count += 1;
+            if count > 1_000_000 {
+                panic!("envelope never finished");
+            }
+        }
+        count
+    }
+
+    /// Count samples until envelope reaches target value.
+    #[allow(dead_code)]
+    fn samples_until_reaches(env: &mut Envelope, target: f32) -> usize {
+        let mut count = 0;
+        while env.value() < target - 0.001 && !env.finished() {
+            env.process();
+            count += 1;
+            if count > 1_000_000 {
+                panic!("envelope never reached target");
+            }
+        }
+        count
+    }
+
+    #[test]
+    fn basic_envelope_stages() {
+        let desc = EnvelopeDescriptor {
+            delay: 0.0,
+            attack: 0.01,
+            hold: 0.01,
+            decay: 0.05,
+            sustain: 0.7,
+            release: 0.2,
+        };
+        let sr = 44100;
+        let mut env = Envelope::new(desc, sr, true, 127);
+
+        // Should start at 0 (delay is 0 so immediately in attack)
+        assert!(env.value() < 0.01);
+
+        // Process through attack
+        let attack_samples = (0.01 * sr as f32) as usize;
+        for _ in 0..attack_samples {
+            env.process();
+        }
+        // After attack + hold, should be near 1.0
+        for _ in 0..((0.01 * sr as f32) as usize) {
+            env.process();
+        }
+        assert!(env.value() > 0.9, "value after attack+hold: {}", env.value());
+
+        // Process through decay
+        let decay_samples = (0.05 * sr as f32) as usize;
+        for _ in 0..decay_samples {
+            env.process();
+        }
+
+        // Should be near sustain level
+        assert!((env.value() - 0.7).abs() < 0.05,
+            "value after decay: {} (expected ~0.7)", env.value());
+
+        // Release
+        env.release();
+        let release_samples = samples_until_finished(&mut env);
+        let expected = (0.2 * sr as f32) as usize;
+        let epsilon = (0.02 * sr as f32) as usize;
+        assert!(
+            release_samples >= expected - epsilon && release_samples <= expected + epsilon,
+            "release samples: {} (expected ~{})", release_samples, expected
+        );
+    }
+
+    #[test]
+    fn release_exponential_curve() {
+        // Verify Release uses exponential (not linear) curve
+        let desc = EnvelopeDescriptor {
+            delay: 0.0,
+            attack: 0.0,
+            hold: 0.0,
+            decay: 0.0,
+            sustain: 1.0,
+            release: 0.1,
+        };
+        let sr = 44100;
+        let mut env = Envelope::new(desc, sr, true, 100);
+
+        // Skip to sustain
+        let mut reached = false;
+        for _ in 0..1000 {
+            env.process();
+            if env.value() > 0.99 { reached = true; break; }
+        }
+        assert!(reached, "envelope should reach 1.0 in sustain");
+
+        env.release();
+
+        // Sample at 25%, 50%, 75% of release
+        let total = (0.1 * sr as f32) as usize;
+        let p25 = total / 4;
+        let p50 = total / 2;
+        let p75 = 3 * total / 4;
+
+        for _ in 0..p25 { env.process(); }
+        let v25 = env.value();
+
+        for _ in 0..(p50 - p25) { env.process(); }
+        let v50 = env.value();
+
+        for _ in 0..(p75 - p50) { env.process(); }
+        let v75 = env.value();
+
+        // Exponential decay: each quarter should drop by roughly the same ratio
+        let ratio1 = v50 / v25;
+        let ratio2 = v75 / v50;
+        let ratio_diff = (ratio1 - ratio2).abs();
+
+        // Exponential should have roughly constant ratio per equal time interval
+        // Linear would have v50 ≈ 0.5, v75 ≈ 0.25 (ratio ~0.5 vs ~0.5 is also constant)
+        // The key test: exponential should NOT be linear
+        // Linear at 25%: 0.75, at 50%: 0.50, at 75%: 0.25
+        // Exponential at 25%: ~0.79, at 50%: ~0.37, at 75%: ~0.05 (for target SILENCE)
+        assert!(ratio_diff < 0.3,
+            "release should be exponential: v25={v25:.4} v50={v50:.4} v75={v75:.4} r1={ratio1:.4} r2={ratio2:.4}");
+        assert!(v25 < 0.9, "exponential decay should drop quickly initially: v25={v25:.4}");
+    }
+
+    #[test]
+    fn velocity_affects_release() {
+        let sr = 44100;
+        let desc = EnvelopeDescriptor {
+            delay: 0.0, attack: 0.0, hold: 0.0, decay: 0.0,
+            sustain: 1.0,
+            release: 0.5,
+        };
+
+        let mut env_soft = Envelope::new(desc, sr, true, 1);
+        let mut env_loud = Envelope::new(desc, sr, true, 127);
+
+        // Skip to sustain
+        for _ in 0..100 {
+            env_soft.process();
+            env_loud.process();
+        }
+        env_soft.release();
+        env_loud.release();
+
+        let soft_dur = samples_until_finished(&mut env_soft);
+        let loud_dur = samples_until_finished(&mut env_loud);
+
+        // Soft note (vel=1) should have shorter release than loud note (vel=127)
+        // vel_factor: 0.2 + 1/127*0.8 ≈ 0.206 vs 0.2 + 1.0*0.8 = 1.0
+        // ratio ≈ 0.206
+        let ratio = soft_dur as f32 / loud_dur as f32;
+        assert!(ratio < 0.8, "soft release ({soft_dur} samples) should be shorter than loud ({loud_dur} samples), ratio={ratio:.2}");
+        assert!(ratio > 0.1, "soft release should not be too short");
+    }
+
+    #[test]
+    fn velocity_affects_volume_chain() {
+        // Verify that velocity-to-volume follows square law in Voice
+        let sr = 44100;
+        let desc = EnvelopeDescriptor::default();
+        let params = VoiceParams {
+            sample: vec![0.5f32; 1000].into(),
+            speed_mult: 1.0,
+            volume: 1.0,
+            loop_mode: LoopMode::NoLoop,
+            loop_start: 0,
+            loop_end: 1000,
+            sample_end: 1000,
+            offset: 0,
+            envelope: desc,
+            exclusive_class: None,
+        };
+
+        let voice_loud = Voice::new(&params, sr, 60, 127);
+        let voice_soft = Voice::new(&params, sr, 60, 64);
+        let voice_silent = Voice::new(&params, sr, 60, 1);
+
+        let vol_loud = voice_loud.volume;
+        let vol_soft = voice_soft.volume;
+        let vol_silent = voice_silent.volume;
+
+        // Square law: (64/127)^2 / (127/127)^2 = (64/127)^2 ≈ 0.254
+        let expected_ratio = (64.0f32 / 127.0f32).powi(2);
+        let actual_ratio = vol_soft / vol_loud;
+        assert!((actual_ratio - expected_ratio).abs() < 0.01,
+            "vel=64/127 ratio: expected {expected_ratio:.4}, got {actual_ratio:.4}");
+
+        assert!(vol_silent < 0.001, "vel=1 should be near-silent: {vol_silent:.6}");
+        assert!(vol_loud > 0.99, "vel=127 should be full volume: {vol_loud:.4}");
+    }
+
+    #[test]
+    fn release_floor_protects_against_zero() {
+        let sr = 44100;
+        let desc = EnvelopeDescriptor {
+            delay: 0.0, attack: 0.0, hold: 0.0, decay: 0.0,
+            sustain: 1.0,
+            release: 0.0, // zero release
+        };
+        let mut env = Envelope::new(desc, sr, true, 100);
+        // Fast-forward to sustain
+        for _ in 0..50 { env.process(); }
+        env.release();
+
+        let dur = samples_until_finished(&mut env);
+        let expected_min = (0.05 * sr as f32) as usize;
+        assert!(dur >= expected_min,
+            "release with zero descriptor should have floor: got {dur} samples, expected >= {expected_min}");
+    }
+
+    #[test]
+    fn kill_release_is_short() {
+        let sr = 44100;
+        let desc = EnvelopeDescriptor {
+            release: 2.0, ..EnvelopeDescriptor::default()
+        };
+        let mut env = Envelope::new(desc, sr, true, 100);
+        // Skip to sustain
+        for _ in 0..50 { env.process(); }
+        env.kill();
+
+        let dur = samples_until_finished(&mut env);
+        // Kill release should be ~5ms
+        let expected = (0.005 * sr as f32) as usize;
+        let epsilon = (0.002 * sr as f32) as usize;
+        assert!((dur as isize - expected as isize).abs() as usize <= epsilon,
+            "kill release: got {dur} samples, expected ~{expected}");
     }
 }

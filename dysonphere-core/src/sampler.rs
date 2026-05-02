@@ -55,6 +55,7 @@ impl Sampler {
         match self.loop_mode {
             LoopMode::LoopContinuous => false,
             LoopMode::LoopSustain if !self.released => false,
+            LoopMode::OneShot => self.position >= self.sample_end as f64,
             _ => self.position >= self.sample_end as f64,
         }
     }
@@ -65,12 +66,14 @@ impl Sampler {
             LoopMode::LoopSustain if !self.released => {
                 self.released = true;
                 // Stop looping, continue playing from current position to sample_end
-                // (position stays where it was; the loop will stop on next cycle)
             }
             LoopMode::LoopContinuous => {
                 // Keep looping but envelope fade will handle it
             }
-            _ => {} // NoLoop / already released: nothing to do
+            LoopMode::OneShot => {
+                // One-shot ignores note-off — play to natural end
+            }
+            _ => {} // NoLoop: nothing to do
         }
     }
 

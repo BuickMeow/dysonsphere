@@ -353,7 +353,8 @@ fn apply_opcode(region: &mut PendingRegion, key: &str, value: &str) {
             region.loop_mode = match value {
                 "no_loop" => LoopMode::NoLoop,
                 "loop_continuous" => LoopMode::LoopContinuous,
-                "loop_sustain" | "one_shot" => LoopMode::LoopSustain,
+                "loop_sustain" => LoopMode::LoopSustain,
+                "one_shot" => LoopMode::OneShot,
                 _ => LoopMode::NoLoop,
             };
         }

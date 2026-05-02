@@ -1,4 +1,4 @@
-use dysonphere_soundfont::types::VoiceParams;
+use dysonphere_soundfont::types::{LoopMode, VoiceParams};
 
 use crate::{envelope::Envelope, sampler::Sampler};
 
@@ -13,19 +13,22 @@ pub struct Voice {
     /// Volume envelope.
     envelope: Envelope,
     /// Master volume (velocity × region volume).
-    volume: f32,
+    pub(crate) volume: f32,
     /// Exclusive class for voice stealing.
     exclusive_class: Option<u8>,
     /// MIDI note number this voice is playing.
     pub key: u8,
     /// MIDI velocity (for voice stealing priority).
     pub velocity: u8,
+    /// Whether this voice is being held by the damper/sustain pedal.
+    pub damper_sustained: bool,
 }
 
 impl Voice {
     pub fn new(params: &VoiceParams, sample_rate: u32, key: u8, velocity: u8) -> Self {
         let vel_norm = velocity as f32 / 127.0;
         let vel_amp = vel_norm.powi(2); // xsynth-style: (vel/127)^2
+        let allow_release = !matches!(params.loop_mode, LoopMode::OneShot);
 
         Self {
             sampler: Sampler::new(
@@ -37,11 +40,12 @@ impl Voice {
                 params.sample_end,
                 params.offset,
             ),
-            envelope: Envelope::new(params.envelope, sample_rate, true, velocity),
+            envelope: Envelope::new(params.envelope, sample_rate, allow_release, velocity),
             volume: params.volume * vel_amp,
             exclusive_class: params.exclusive_class,
             key,
             velocity,
+            damper_sustained: false,
         }
     }
 

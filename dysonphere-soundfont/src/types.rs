@@ -7,6 +7,8 @@ pub enum LoopMode {
     NoLoop,
     LoopContinuous,
     LoopSustain,
+    /// One-shot: play once, ignore note-off, no release envelope.
+    OneShot,
 }
 
 /// Envelope timing descriptor, in seconds.

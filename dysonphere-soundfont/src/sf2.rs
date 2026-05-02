@@ -435,9 +435,14 @@ fn build_presets(
                     sustain: sustain_to_percent(
                         sustain_merge(0, pzone.env_sustain, izone.env_sustain) as f32,
                     ),
-                    release: timecents_to_seconds(
-                        timecents_merge(-12000, pzone.env_release, izone.env_release) as f32,
-                    ),
+                    release: if pzone.env_release.is_none() && izone.env_release.is_none() {
+                        // No release specified by soundfont — use a musical default (0.5s)
+                        0.5
+                    } else {
+                        timecents_to_seconds(
+                            timecents_merge(-12000, pzone.env_release, izone.env_release) as f32,
+                        )
+                    },
                 };
 
                 let envelope = EnvelopeDescriptor {
