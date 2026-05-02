@@ -43,6 +43,9 @@ pub struct Envelope {
 
 /// Amplitude threshold below which a voice in release is considered done.
 const SILENCE_THRESHOLD: f32 = 1.0 / 32768.0;
+/// Perceived-silence target for release curve. -60dB is the audio industry standard.
+/// Using SILENCE_THRESHOLD (-90dB) causes perceived release to be only 40-50% of intended.
+const RELEASE_TARGET: f32 = 0.001;
 
 impl Envelope {
     pub fn new(
@@ -84,9 +87,9 @@ impl Envelope {
                 target: descriptor.sustain,
                 duration_samples: 0,
             },
-            // Release — target SILENCE_THRESHOLD so exponential curve activates
+            // Release — target RELEASE_TARGET (-60dB) for musical decay that matches perceived time
             StageParams {
-                target: SILENCE_THRESHOLD,
+                target: RELEASE_TARGET,
                 duration_samples: (release.max(0.001) * sr).round() as u32,
             },
             // Finished
@@ -221,7 +224,7 @@ impl Envelope {
             Stage::Finished => Stage::Finished,
         };
 
-        if next == Stage::Finished && self.value.abs() <= SILENCE_THRESHOLD {
+        if next == Stage::Finished && self.value.abs() <= RELEASE_TARGET {
             self.value = 0.0;
         }
 

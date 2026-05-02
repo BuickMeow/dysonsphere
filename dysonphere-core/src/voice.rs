@@ -51,7 +51,15 @@ impl Voice {
 
     /// Whether this voice has finished and can be removed.
     pub fn finished(&self) -> bool {
-        self.envelope.finished() || self.sampler.finished()
+        if self.envelope.finished() {
+            return true;
+        }
+        // During release, the sampler may end before the envelope tail fades out.
+        // Only allow sampler to kill the voice when we're NOT releasing.
+        if !self.envelope.is_releasing() && self.sampler.finished() {
+            return true;
+        }
+        false
     }
 
     /// Whether the voice is currently releasing.

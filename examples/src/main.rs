@@ -84,15 +84,6 @@ fn main() {
     let offset = notes.len() * note_samples;
     synth.read_samples(&mut buffer[offset..]);
 
-    // Normalize
-    let max = buffer.iter().fold(0.0f32, |acc, &s| acc.max(s.abs()));
-    if max > 0.0 {
-        let gain = 0.9 / max;
-        for s in &mut buffer {
-            *s *= gain;
-        }
-    }
-
     // Write WAV
     let spec = WavSpec {
         channels: 1,

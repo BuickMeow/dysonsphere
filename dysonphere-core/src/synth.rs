@@ -12,14 +12,49 @@ use crate::{
 /// Maximum number of simultaneous voices.
 const MAX_VOICES: usize = 256;
 
+/// Smoothing interval for CC value changes, in seconds.
+const CC_SMOOTH_SECONDS: f32 = 0.01;
+
+/// Simple linear smoothing for a scalar control value.
+#[derive(Clone)]
+struct SmoothedValue {
+    current: f32,
+    target: f32,
+    step: f32,
+}
+
+impl SmoothedValue {
+    fn new(initial: f32) -> Self {
+        Self { current: initial, target: initial, step: 0.0 }
+    }
+
+    fn set(&mut self, target: f32, sample_rate: u32) {
+        self.target = target;
+        let duration_samples = (CC_SMOOTH_SECONDS * sample_rate as f32).max(1.0);
+        self.step = (target - self.current) / duration_samples;
+    }
+
+    fn get(&self) -> f32 {
+        self.current
+    }
+
+    fn advance(&mut self) {
+        if (self.target - self.current).abs() < self.step.abs().max(1e-7) {
+            self.current = self.target;
+        } else {
+            self.current += self.step;
+        }
+    }
+}
+
 /// Per-channel CC state.
 #[derive(Clone)]
 struct ChannelState {
     bank: u8,
     program: u8,
-    volume: f32,       // CC7, 0.0–1.0
-    pan: f32,          // CC10, 0.0 = left, 0.5 = center, 1.0 = right
-    expression: f32,   // CC11, 0.0–1.0
+    volume: SmoothedValue,       // CC7, 0.0–1.0
+    pan: SmoothedValue,          // CC10, 0.0 = left, 0.5 = center, 1.0 = right
+    expression: SmoothedValue,   // CC11, 0.0–1.0
     damper: bool,      // CC64, sustain pedal
     pitch_bend: f32,   // -1.0 to 1.0
     pitch_bend_range: f32, // semitones
@@ -37,9 +72,9 @@ impl Default for ChannelState {
         Self {
             bank: 0,
             program: 0,
-            volume: 1.0,
-            pan: 0.5,
-            expression: 1.0,
+            volume: SmoothedValue::new(1.0),
+            pan: SmoothedValue::new(0.5),
+            expression: SmoothedValue::new(1.0),
             damper: false,
             pitch_bend: 0.0,
             pitch_bend_range: 2.0,
@@ -302,17 +337,17 @@ impl Synthesizer {
             }
             ControlEvent::Volume(v) => {
                 if let Some(ch) = self.channels.get_mut(ch_idx as usize) {
-                    ch.volume = v.clamp(0.0, 1.0);
+                    ch.volume.set(v.clamp(0.0, 1.0), self.stream_params.sample_rate);
                 }
             }
             ControlEvent::Pan(v) => {
                 if let Some(ch) = self.channels.get_mut(ch_idx as usize) {
-                    ch.pan = v.clamp(0.0, 1.0);
+                    ch.pan.set(v.clamp(0.0, 1.0), self.stream_params.sample_rate);
                 }
             }
             ControlEvent::Expression(v) => {
                 if let Some(ch) = self.channels.get_mut(ch_idx as usize) {
-                    ch.expression = v.clamp(0.0, 1.0);
+                    ch.expression.set(v.clamp(0.0, 1.0), self.stream_params.sample_rate);
                 }
             }
             ControlEvent::Damper(v) => {
@@ -347,15 +382,15 @@ impl Synthesizer {
             }
             0x07 => {
                 // Volume
-                ch.volume = value as f32 / 127.0;
+                ch.volume.set(value as f32 / 127.0, self.stream_params.sample_rate);
             }
             0x0A => {
                 // Pan (balance on some synths, 0x08 works too)
-                ch.pan = value as f32 / 127.0;
+                ch.pan.set(value as f32 / 127.0, self.stream_params.sample_rate);
             }
             0x0B => {
                 // Expression
-                ch.expression = value as f32 / 127.0;
+                ch.expression.set(value as f32 / 127.0, self.stream_params.sample_rate);
             }
             0x40 => {
                 // Damper / Sustain
@@ -419,7 +454,7 @@ impl Synthesizer {
         let (ch_pitch_shift, ch_gain) = {
             let ch = &self.channels[ch_idx as usize];
             let pitch_shift = ch.coarse_tune + ch.pitch_bend * ch.pitch_bend_range + ch.fine_tune / 100.0;
-            let gain = ch.volume * ch.expression;
+            let gain = ch.volume.get() * ch.expression.get();
             (pitch_shift, gain)
         };
         let ch_pitch_mult = 2.0f32.powf(ch_pitch_shift / 12.0);
@@ -473,8 +508,12 @@ impl Synthesizer {
             self.voices.swap_remove(idx);
             return;
         }
-        // Otherwise steal the oldest
-        self.voices.remove(0);
+        // Otherwise steal the quietest voice (lowest velocity)
+        if let Some((quietest_idx, _)) = self.voices.iter()
+            .enumerate()
+            .min_by_key(|(_, (_, v))| v.velocity) {
+            self.voices.swap_remove(quietest_idx);
+        }
     }
 }
 
@@ -489,6 +528,7 @@ impl AudioPipe for Synthesizer {
         match self.stream_params.channels {
             ChannelCount::Mono => {
                 for sample in buffer.iter_mut() {
+                    advance_channel_smoothers(&mut self.channels);
                     let mut mix: f32 = 0.0;
                     let mut i = 0;
                     while i < self.voices.len() {
@@ -500,11 +540,12 @@ impl AudioPipe for Synthesizer {
                             i += 1;
                         }
                     }
-                    *sample = mix.clamp(-1.0, 1.0);
+                    *sample = soft_clip(mix * MASTER_GAIN);
                 }
             }
             ChannelCount::Stereo => {
                 for chunk in buffer.chunks_exact_mut(2) {
+                    advance_channel_smoothers(&mut self.channels);
                     let mut left: f32 = 0.0;
                     let mut right: f32 = 0.0;
                     let mut i = 0;
@@ -512,7 +553,7 @@ impl AudioPipe for Synthesizer {
                         let sample = self.voices[i].1.process();
                         // Simple pan: equal power panning
                         let ch = &self.channels[self.voices[i].0 as usize];
-                        let pan = ch.pan;
+                        let pan = ch.pan.get();
                         let left_gain = (1.0 - pan).sqrt();
                         let right_gain = pan.sqrt();
                         left += sample * left_gain;
@@ -525,10 +566,35 @@ impl AudioPipe for Synthesizer {
                             i += 1;
                         }
                     }
-                    chunk[0] = left.clamp(-1.0, 1.0);
-                    chunk[1] = right.clamp(-1.0, 1.0);
+                    chunk[0] = soft_clip(left * MASTER_GAIN);
+                    chunk[1] = soft_clip(right * MASTER_GAIN);
                 }
             }
         }
+    }
+}
+
+#[inline]
+fn advance_channel_smoothers(channels: &mut [ChannelState]) {
+    for ch in channels {
+        ch.volume.advance();
+        ch.expression.advance();
+        ch.pan.advance();
+    }
+}
+
+/// Master gain attenuation: provides headroom for multi-voice mixing.
+/// With ~6 voices at full scale, mix ≈ 6.0; 0.15 * 6.0 = 0.9 stays below 1.0.
+const MASTER_GAIN: f32 = 0.15;
+
+/// Soft clip with guaranteed |output| ≤ 1.0.
+/// Transparent for |x| ≤ 1, then asymptotically approaches ±1.0 via 1/x compression.
+#[inline]
+fn soft_clip(x: f32) -> f32 {
+    let ax = x.abs();
+    if ax <= 1.0 {
+        x
+    } else {
+        x.signum() * (1.0 - 0.5 / ax)
     }
 }
